@@ -2,6 +2,8 @@ import os
 import torch
 
 
+VISUALIZE_ON = False
+
 # =========================================================
 # DEVICE
 # =========================================================
@@ -27,9 +29,9 @@ IMAGE_SIZE = 128
 
 CHANNELS = 1
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 
-NUM_WORKERS = 2
+NUM_WORKERS = 4
 
 PIN_MEMORY = True
 

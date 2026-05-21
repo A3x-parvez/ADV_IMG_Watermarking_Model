@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from torch.utils.data import DataLoader
 
-from torch.cuda.amp import (
+from torch.amp import (
     autocast,
     GradScaler
 )
@@ -28,6 +28,7 @@ from config import (
     EPOCHS,
 
     LEARNING_RATE,
+    VISUALIZE_ON,
     WEIGHT_DECAY,
 
     SAVE_EVERY,
@@ -174,15 +175,17 @@ model = WatermarkSystem().to(device)
 # OPTIONAL PYTORCH COMPILE
 # =========================================================
 
-try:
+# try:
 
-    model = torch.compile(model)
+#     model = torch.compile(model)
 
-    print("Torch Compile Enabled")
+#     print("Torch Compile Enabled")
 
-except:
+# except:
 
-    print("Torch Compile Not Available")
+#     print("Torch Compile Not Available")
+
+print("Torch Compile Disabled")
 
 # =========================================================
 # OPTIMIZER
@@ -335,7 +338,10 @@ for epoch in range(EPOCHS):
         # =================================================
 
         # with autocast(enabled=USE_AMP):
-        with autocast("cuda",enabled=USE_AMP):
+        with autocast(
+            device_type="cuda",
+            enabled=USE_AMP
+                ):
 
             (
 
@@ -343,13 +349,16 @@ for epoch in range(EPOCHS):
 
                 attacked_stego,
 
-                blueprint,
+                encrypted_blueprint,
 
                 recovered_cover,
 
                 recovered_watermark,
 
-                auth_key
+                auth_key,
+
+                auth_valid
+
 
             ) = model(
 
@@ -376,7 +385,7 @@ for epoch in range(EPOCHS):
 
                 recovered_watermark,
 
-                blueprint
+                encrypted_blueprint
             )
 
         # =================================================
@@ -522,7 +531,7 @@ for epoch in range(EPOCHS):
         # VISUALIZATION
         # =================================================
 
-        if step == 0 and epoch % VISUALIZE_EVERY == 0:
+        if step == 0 and epoch % VISUALIZE_EVERY == 0 and VISUALIZE_ON:
 
             save_visualization(
 
@@ -698,5 +707,7 @@ for epoch in range(EPOCHS):
         )
 
         print(f"Checkpoint Saved @ Epoch {epoch+1}")
+    
+    torch.cuda.empty_cache()
 
 print("Training Complete")
