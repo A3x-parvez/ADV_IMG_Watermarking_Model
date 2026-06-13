@@ -1,0 +1,102 @@
+Optimizations and Rationale
+===========================
+
+Overview
+--------
+This file documents the performance-focused changes applied to the training pipeline to remove CPU-bound bottlenecks, reduce GPU<->CPU synchronization, and improve training throughput.
+
+Files Changed
+-------------
+- metrics.py
+- security/encryption.py
+- security/chaos.py
+- security/auth.py
+- attacks.py
+
+Per-file Changes, Why, and Benefits
+-----------------------------------
+1) metrics.py
+   - What changed:
+     - Replaced `.detach().cpu().numpy()` conversions with pure-torch operations for NPCR, UACI, pixel correlation.
+     - Replaced CPU numpy histogram with `torch.histc` and ensured casting to `float32` for entropy.
+   - Why:
+     - CPU transfers and numpy conversions per batch cause heavy synchronization and slow training, especially under AMP.
+   - Benefit:
+     - Metrics compute on GPU (when tensors on GPU), significantly reducing per-step overhead and avoiding dtype errors.
+   - Caveat:
+     - Results are numerically equivalent for the intended metrics; small floating differences possible.
+
+2) security/encryption.py
+   - What changed:
+     - Replaced iterative logistic-style mask generation (Python loop) with deterministic `torch.rand` seeded by a Generator.
+   - Why:
+     - Python loops over large tensors are slow and serial; seeded torch RNG is vectorized and faster.
+   - Benefit:
+     - Faster mask generation; remains deterministic given the same key.
+
+3) security/chaos.py
+   - What changed:
+     - Vectorized `generate_hybrid_chaos` using seeded RNGs.
+     - Rewrote `chaotic_permutation` and `reverse_permutation` to operate on batched tensors with `argsort`, `gather`, and `scatter_` instead of per-sample Python loops.
+   - Why:
+     - Per-sample loops serialize computation and force CPU-GPU transfers.
+   - Benefit:
+     - Permutations run in parallel on GPU; big time savings for batch processing.
+   - Caveat:
+     - Numeric details differ from legacy iterative maps but behavior remains deterministic and suitable for robustness experiments.
+
+4) security/auth.py
+   - What changed:
+     - Replaced full-tensor `.cpu().numpy().tobytes()` hashing with a compact deterministic tensor summary (mean/std/min/max/shape) before SHA256.
+   - Why:
+     - Serializing whole tensors to bytes is expensive and triggers CPU memory copies.
+   - Benefit:
+     - Orders-of-magnitude faster on the hot path; avoids blocking CPU transfers.
+   - Caveat:
+     - Summary hash is not cryptographically equivalent to hashing full raw bytes. If bit-exact integrity is required, compute full hash infrequently or on checkpoints.
+
+5) attacks.py
+   - What changed:
+     - Batchified rotation (operate on tensors, no `.cpu()` roundtrip).
+     - Replaced costly per-image PIL JPEG encode/decode loop with a fast approximation (small Gaussian blur + 8-bit quantization) implemented on tensors.
+   - Why:
+     - PIL-based per-image processing forces device transfers and is slow for training loops.
+   - Benefit:
+     - Faster, GPU-friendly attack simulation; removes expensive CPU-bound I/O.
+   - Caveat:
+     - JPEG is approximated; if exact JPEG artifacts are required, consider doing JPEG preprocessing offline or performing true JPEG in a separate data pipeline.
+
+General Rationale
+-----------------
+- Primary bottlenecks were: frequent `.cpu().numpy()` conversions, Python per-sample loops for chaos/permutation and attacks, and PIL/IO operations inside the training loop.
+- Aim was to keep deterministic behavior while moving heavy work to vectorized Torch ops so it can run on GPU and avoid synchronization stalls.
+
+How to Validate & Measure
+-------------------------
+1) Quick profiler snippet (run a few training steps):
+
+from torch.profiler import profile, record_function, ProfilerActivity
+with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+    # run a few training steps
+print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=50))
+
+2) Micro-timing: add timestamps around suspect functions in `train.py` and compare before/after changes.
+
+Recommended Next Steps
+----------------------
+- Run a 5-10 step profiled run and compare wall-time for forward/backward and specific functions (attacks, encryption, metrics).
+- If JPEG fidelity matters, implement true JPEG encoding in a separate pre-processing job or run libjpeg asynchronously in a dedicated CPU process.
+- Consider computing expensive metrics less frequently (e.g., per N steps or per epoch).
+- If cryptographic integrity is required, compute full-tensor SHA256 on checkpoints only.
+- If GPU memory allows, increase `BATCH_SIZE` to improve GPU utilization.
+
+Notes for Future Developers
+---------------------------
+- Avoid calling `.cpu().numpy()` per-batch inside the training inner loop. If you must, do it very sparingly (e.g., logging once per epoch).
+- Prefer `torch.Generator` with manual seeds for deterministic pseudo-random behavior.
+- Use `torch.gather`/`torch.argsort` for batched permutations instead of Python loops.
+- When using AMP/autocast, be mindful that some torch ops (e.g., `histc`) may not accept float16: cast to float32 when needed.
+
+Contact
+-------
+If anything breaks or numerical fidelity is crucial, ping the author of these changes for targeted adjustments.
