@@ -161,15 +161,15 @@ def calculate_uaci(img1, img2):
 
 def calculate_entropy(img):
 
-    # Use torch histogram to avoid large CPU transfers
-    img_flat = img.flatten()
+    # Ensure tensor is float32 (histc doesn't support float16)
+    img_flat = img.flatten().to(dtype=torch.float32)
 
     hist = torch.histc(
         img_flat,
         bins=256,
         min=0.0,
         max=1.0
-    ).to(img.device)
+    )
 
     total = hist.sum() + 1e-12
 
