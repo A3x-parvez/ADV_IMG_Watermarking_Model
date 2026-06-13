@@ -137,13 +137,9 @@ def calculate_mae(img1, img2):
 
 def calculate_npcr(img1, img2):
 
-    img1 = img1.detach().cpu().numpy()
+    diff = (torch.abs(img1 - img2) > 1e-5).float()
 
-    img2 = img2.detach().cpu().numpy()
-
-    diff = np.abs(img1 - img2) > 1e-5
-
-    npcr = np.sum(diff) / diff.size
+    npcr = diff.mean().item()
 
     return npcr * 100
 
@@ -154,15 +150,9 @@ def calculate_npcr(img1, img2):
 
 def calculate_uaci(img1, img2):
 
-    img1 = img1.detach().cpu().numpy()
+    uaci = torch.mean(torch.abs(img1 - img2)).item()
 
-    img2 = img2.detach().cpu().numpy()
-
-    uaci = np.mean(
-        np.abs(img1 - img2)
-    )
-
-    return (uaci / 1.0) * 100
+    return uaci * 100
 
 
 # =========================================================
@@ -171,23 +161,25 @@ def calculate_uaci(img1, img2):
 
 def calculate_entropy(img):
 
-    img = img.detach().cpu().numpy()
+    # Use torch histogram to avoid large CPU transfers
+    img_flat = img.flatten()
 
-    hist, _ = np.histogram(
-        img.flatten(),
+    hist = torch.histc(
+        img_flat,
         bins=256,
-        range=(0, 1)
-    )
+        min=0.0,
+        max=1.0
+    ).to(img.device)
 
-    hist = hist / hist.sum()
+    total = hist.sum() + 1e-12
 
-    hist = hist[hist > 0]
+    prob = hist / total
 
-    entropy = -np.sum(
-        hist * np.log2(hist)
-    )
+    prob = prob[prob > 0]
 
-    return entropy
+    entropy = -torch.sum(prob * torch.log2(prob))
+
+    return entropy.item()
 
 
 # =========================================================
@@ -196,20 +188,19 @@ def calculate_entropy(img):
 
 def pixel_correlation(img):
 
-    img = img.detach().cpu().numpy().flatten()
+    flat = img.flatten()
 
-    x = img[:-1]
-    y = img[1:]
+    x = flat[:-1]
+    y = flat[1:]
 
-    if np.std(x) < 1e-8 or np.std(y) < 1e-8:
+    if torch.std(x) < 1e-8 or torch.std(y) < 1e-8:
         return 0.0
 
-    correlation = np.corrcoef(
-        x,
-        y
-    )[0, 1]
+    cov = torch.mean((x - x.mean()) * (y - y.mean()))
 
-    return correlation
+    corr = cov / (torch.std(x) * torch.std(y) + 1e-12)
+
+    return corr.item()
 
 
 # =========================================================

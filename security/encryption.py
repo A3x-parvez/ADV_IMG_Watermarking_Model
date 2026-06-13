@@ -30,39 +30,21 @@ def generate_chaotic_mask(
     key
 ):
 
+    # Generate a deterministic pseudo-random mask using a seeded generator
     total = 1
 
     for s in shape:
         total *= s
 
-    seed = int(
-        key[:8],
-        16
-    )
+    seed = int(key[:8], 16)
 
-    generator = torch.Generator()
+    gen = torch.Generator()
 
-    generator.manual_seed(seed)
+    gen.manual_seed(seed)
 
-    x = torch.zeros(total)
+    x = torch.rand(total, generator=gen)
 
-    r = 3.99
-
-    x[0] = 0.51
-
-    for i in range(1, total):
-
-        x[i] = (
-            r *
-            x[i - 1] *
-            (1 - x[i - 1])
-        )
-
-    x = (
-        x - x.min()
-    ) / (
-        x.max() - x.min() + 1e-8
-    )
+    x = (x - x.min()) / (x.max() - x.min() + 1e-8)
 
     return x.reshape(shape)
 

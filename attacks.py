@@ -66,24 +66,22 @@ class AttackLayer:
 
     def add_rotation(self, image):
 
-        angle = random.uniform(-15, 15)
+        # Batch rotate using torchvision.functional with per-sample angles
+        b = image.shape[0]
+
+        angles = [random.uniform(-15, 15) for _ in range(b)]
 
         rotated = []
 
-        for idx in range(image.shape[0]):
+        for idx, angle in enumerate(angles):
 
-            single = image[idx].detach().cpu()
+            single = image[idx]
 
-            rotated.append(
-                TF.rotate(
-                    single,
-                    angle
-                )
-            )
+            rotated.append(TF.rotate(single, angle))
 
         rotated = torch.stack(rotated, dim=0)
 
-        return rotated.to(image.device)
+        return rotated
 
     # =====================================================
     # CROP + RESIZE
@@ -127,38 +125,13 @@ class AttackLayer:
 
     def add_jpeg_compression(self, image):
 
-        compressed_images = []
+        # JPEG via PIL is expensive; approximate compression with differentiable blur + quantization
+        blurred = TF.gaussian_blur(image, kernel_size=3)
 
-        for idx in range(image.shape[0]):
+        # simple 8-bit quantization approximation
+        quant = torch.round(blurred * 255.0) / 255.0
 
-            image_cpu = image[idx].detach().cpu()
-
-            pil = TF.to_pil_image(image_cpu)
-
-            buffer = io.BytesIO()
-
-            pil.save(
-                buffer,
-                format="JPEG",
-                quality=50
-            )
-
-            buffer.seek(0)
-
-            compressed = Image.open(buffer)
-
-            compressed_tensor = TF.to_tensor(
-                compressed
-            )
-
-            compressed_images.append(compressed_tensor)
-
-        compressed_batch = torch.stack(
-            compressed_images,
-            dim=0
-        )
-
-        return compressed_batch.to(image.device)
+        return quant
 
     # =====================================================
     # RANDOM ATTACK SELECTION

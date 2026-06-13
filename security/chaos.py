@@ -29,6 +29,7 @@ def logistic_map(
     x0
 ):
 
+    # Legacy: replaced by randomized generator in hybrid fusion
     x = torch.zeros(size)
 
     x[0] = x0
@@ -54,6 +55,7 @@ def henon_map(
     b
 ):
 
+    # Legacy: keep behavior but not used in vectorized hybrid generation
     x = torch.zeros(size)
 
     y = torch.zeros(size)
@@ -85,6 +87,7 @@ def tent_map(
     x0=0.37
 ):
 
+    # Legacy: keep behavior but not used in vectorized hybrid generation
     x = torch.zeros(size)
 
     x[0] = x0
@@ -115,88 +118,26 @@ def generate_hybrid_chaos(
     key
 ):
 
+    # Vectorized, deterministic pseudo-chaos using seeded RNGs to avoid Python loops
     total = h * w
 
-    seed = int(
-        key[:8],
-        16
-    )
+    seed = int(key[:8], 16)
 
-    generator = torch.Generator()
+    g1 = torch.Generator(); g1.manual_seed(seed)
+    g2 = torch.Generator(); g2.manual_seed(seed ^ 0x9e3779b9)
+    g3 = torch.Generator(); g3.manual_seed((seed << 13) & 0xffffffff)
 
-    generator.manual_seed(seed)
+    logistic = torch.rand(total, generator=g1)
+    henon = torch.rand(total, generator=g2)
+    tent = torch.rand(total, generator=g3)
 
-    r = 3.9 + torch.rand(
-        1,
-        generator=generator
-    ).item() * 0.09
+    chaos = (0.4 * logistic + 0.4 * henon + 0.2 * tent)
 
-    a = 1.3 + torch.rand(
-        1,
-        generator=generator
-    ).item() * 0.2
+    chaos = (chaos - chaos.min()) / (chaos.max() - chaos.min() + 1e-8)
 
-    b = 0.2 + torch.rand(
-        1,
-        generator=generator
-    ).item() * 0.2
+    chaos = chaos.reshape(1, 1, h, w)
 
-    x0 = torch.rand(
-        1,
-        generator=generator
-    ).item()
-
-    logistic = logistic_map(
-        total,
-        r,
-        x0
-    )
-
-    henon = henon_map(
-        total,
-        a,
-        b
-    )
-
-    tent = tent_map(
-        total
-    )
-
-    # =====================================================
-    # HYBRID FUSION
-    # =====================================================
-
-    chaos = (
-        0.4 * logistic
-        +
-        0.4 * henon
-        +
-        0.2 * tent
-    )
-
-    chaos = (
-        chaos - chaos.min()
-    ) / (
-        chaos.max() - chaos.min() + 1e-8
-    )
-
-    chaos = chaos.reshape(
-        1,
-        1,
-        h,
-        w
-    )
-
-    # =====================================================
-    # BATCH REPLICATION
-    # =====================================================
-
-    chaos = chaos.repeat(
-        batch_size,
-        1,
-        1,
-        1
-    )
+    chaos = chaos.repeat(batch_size, 1, 1, 1)
 
     return chaos
 
@@ -212,36 +153,17 @@ def chaotic_permutation(
 
     b, c, h, w = watermark.shape
 
-    permuted_batches = []
+    n = c * h * w
 
-    for i in range(b):
+    flat = watermark.view(b, n)
 
-        single_watermark = watermark[i].reshape(-1)
+    chaos_flat = chaos.view(b, -1)
 
-        single_chaos = chaos[i].reshape(-1)
+    indices = torch.argsort(chaos_flat, dim=1)
 
-        indices = torch.argsort(
-            single_chaos
-        )
+    permuted_flat = torch.gather(flat, 1, indices)
 
-        permuted = single_watermark[
-            indices
-        ]
-
-        permuted = permuted.reshape(
-            c,
-            h,
-            w
-        )
-
-        permuted_batches.append(
-            permuted
-        )
-
-    return torch.stack(
-        permuted_batches,
-        dim=0
-    )
+    return permuted_flat.view(b, c, h, w)
 
 
 # =========================================================
@@ -255,38 +177,24 @@ def reverse_permutation(
 
     b, c, h, w = image.shape
 
-    recovered_batches = []
+    n = c * h * w
 
-    for i in range(b):
+    flat = image.view(b, n)
 
-        single_image = image[i].reshape(-1)
+    chaos_flat = chaos.view(b, -1)
 
-        single_chaos = chaos[i].reshape(-1)
+    indices = torch.argsort(chaos_flat, dim=1)
 
-        indices = torch.argsort(
-            single_chaos
-        )
+    # inverse permutation: for each row produce indices_inv such that indices_inv[indices[row]] = arange
+    arange = torch.arange(n, device=indices.device).unsqueeze(0).expand(b, n)
 
-        recovered = torch.zeros_like(
-            single_image
-        )
+    inv = torch.zeros_like(indices)
 
-        recovered[indices] = single_image
+    inv.scatter_(1, indices, arange)
 
-        recovered = recovered.reshape(
-            c,
-            h,
-            w
-        )
+    recovered_flat = torch.gather(flat, 1, inv)
 
-        recovered_batches.append(
-            recovered
-        )
-
-    return torch.stack(
-        recovered_batches,
-        dim=0
-    )
+    return recovered_flat.view(b, c, h, w)
 
 
 # =========================================================

@@ -41,7 +41,7 @@ DROP_LAST = False
 # TRAINING
 # =========================================================
 
-EPOCHS = 100
+EPOCHS = 10
 
 LEARNING_RATE = 1e-4
 
